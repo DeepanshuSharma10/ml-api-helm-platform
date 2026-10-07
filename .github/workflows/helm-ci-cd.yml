@@ -64,7 +64,7 @@ jobs:
   publish:
     name: Publish Helm Chart to AWS ECR
     needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_ECR_PUBLISH == 'true'
     runs-on: ubuntu-latest
 
     permissions:
