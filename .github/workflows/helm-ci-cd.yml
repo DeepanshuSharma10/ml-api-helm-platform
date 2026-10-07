@@ -1,0 +1,101 @@
+name: Helm CI/CD
+
+on:
+  pull_request:
+    paths:
+      - "helm/**"
+      - "tests/**"
+      - ".github/workflows/helm-ci-cd.yml"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "helm/**"
+      - "tests/**"
+      - ".github/workflows/helm-ci-cd.yml"
+
+jobs:
+  validate:
+    name: Validate Helm Chart
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Run Helm Chart Tests
+        run: |
+          chmod +x tests/helm-test.sh
+          ./tests/helm-test.sh
+
+      - name: Helm Lint
+        run: helm lint helm/ml-api
+
+      - name: Render Dev
+        run: |
+          helm template ml-api-dev helm/ml-api \
+            -f helm/ml-api/values-dev.yaml
+
+      - name: Render Staging
+        run: |
+          helm template ml-api-staging helm/ml-api \
+            -f helm/ml-api/values-staging.yaml
+
+      - name: Render Production
+        run: |
+          helm template ml-api-prod helm/ml-api \
+            -f helm/ml-api/values-prod.yaml
+
+      - name: Package Helm Chart
+        run: |
+          mkdir -p dist
+          helm package helm/ml-api --destination dist
+
+      - name: Upload Helm Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-api-helm-chart
+          path: dist/*.tgz
+
+  publish:
+    name: Publish Helm Chart to AWS ECR
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Package Helm Chart
+        run: |
+          mkdir -p dist
+          helm package helm/ml-api --destination dist
+
+      - name: Push Helm Chart to ECR OCI Registry
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          helm push dist/ml-api-*.tgz \
+            oci://${REGISTRY}/helm
